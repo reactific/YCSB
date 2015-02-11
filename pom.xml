@@ -40,7 +40,7 @@
       <version>1.6.4</version>
     </dependency>
   </dependencies>
- 
+
   <!-- Properties Management -->
   <properties>
     <maven.assembly.version>2.2.1</maven.assembly.version>
@@ -53,6 +53,7 @@
     <mongodb.version>2.11.2</mongodb.version>
     <orientdb.version>1.0.1</orientdb.version>
     <redis.version>2.0.0</redis.version>
+    <rxmongo.version>0.1.0-SNAPSHOT</rxmongo.version>
     <voldemort.version>0.81</voldemort.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <thrift.version>0.8.0</thrift.version>
@@ -61,22 +62,23 @@
 
   <modules>
     <!--module>build-tools</module-->
-    <module>cassandra</module>
+    <!--module>cassandra</module-->
     <module>core</module>
-    <module>hbase</module>
-    <module>hypertable</module>
-    <module>accumulo</module>
-    <module>dynamodb</module>
-    <module>elasticsearch</module>
+    <!--<module>hbase</module>-->
+    <!--<module>hypertable</module>-->
+    <!--<module>accumulo</module>-->
+    <!--<module>dynamodb</module>-->
+    <!--<module>elasticsearch</module>-->
     <!--<module>gemfire</module>-->
-    <module>infinispan</module>
+    <!--<module>infinispan</module>-->
     <module>jdbc</module>
-    <module>mapkeeper</module>
+    <!--<module>mapkeeper</module>-->
     <module>mongodb</module>
-    <module>orientdb</module>
+    <!--<module>orientdb</module>-->
     <!--module>nosqldb</module-->
-    <module>redis</module>
-    <module>voldemort</module>
+    <!-- <module>redis</module>-->
+    <module>rxmongo</module>
+    <!-- <module>voldemort</module>-->
     <module>distribution</module>
   </modules>
 
