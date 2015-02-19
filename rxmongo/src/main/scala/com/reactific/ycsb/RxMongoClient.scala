@@ -7,6 +7,9 @@
 
 package com.reactific.ycsb
 
+import akka.util.ByteString
+import com.reactific.hsp.Profiler
+
 import rxmongo.bson.BinarySubtype.UserDefinedBinary
 import rxmongo.bson._
 import rxmongo.bson.BSONCodec.ArrayOfStringCodec
@@ -70,9 +73,7 @@ class RxMongoClient extends DB {
         } else {
           // initialize MongoDb driver
           val props: Properties = getProperties
-          val url: String = props.getProperty("rxmongo.url", "mongodb://localhost:27017/ycsb?minPoolSize=10&maxPoolSize=100")
-
-
+          val url: String = props.getProperty("rxmongo.url", "mongodb://localhost:27017/ycsb?minPoolSize=2&maxPoolSize=2")
           val dbname: String = props.getProperty("rxmongo.db", "ycsb")
           rxmongo = Client(url)
           database = rxmongo.database(dbname)
@@ -93,13 +94,12 @@ class RxMongoClient extends DB {
    * Cleanup any state for this DB.
    * Called once per DB instance; there is one DB instance per client thread.
    */
-  override def cleanup(): Unit = Profiler.profile("RxMongoClient.cleanup") {
+  override def cleanup(): Unit = {
     Try {
       if (RxMongo.initCount.decrementAndGet() <= 0) {
         RxMongo.mongo.close()
         RxMongo.mongo = null
         RxMongo.database = null
-        Profiler.print_profile_data(System.out)
       }
     } match {
       case Success(x) ⇒ x
@@ -119,8 +119,9 @@ class RxMongoClient extends DB {
   override def delete(table: String, key: String): Int = Profiler.profile("RxMongoClient.delete") {
     Try {
       val coll = database.collection(table)
-      val future = coll.delete(Seq(Delete("_id" $eq key, 1))).map { wr ⇒ if (wr.ok != 0) 0 else 1 }
+      val future = coll.delete(Seq(Delete("_id" $eq key, 1)))
       Await.result(future, 5.seconds)
+      0
     } match {
       case Success(x: Int) ⇒ x
       case Failure(xcptn) ⇒
@@ -128,6 +129,13 @@ class RxMongoClient extends DB {
         System.err.println(xcptn.toString)
         1
     }
+  }
+
+  def bi2bs(bi: ByteIterator) : ByteString = {
+    val b = ByteString.newBuilder
+    b.sizeHint(bi.bytesLeft().toInt)
+    while (bi.hasNext) { b.putByte(bi.nextByte) }
+    b.result()
   }
 
   /**
@@ -139,31 +147,28 @@ class RxMongoClient extends DB {
    * @param values A HashMap of field/value pairs to insert in the record
    * @return Zero on success, a non-zero error code on error. See this class's description for a discussion of error codes.
    */
-  override def insert(table: String, key: String, values: java.util.HashMap[String, ByteIterator]): Int =
-    Profiler.profile("RxMongoClient.insert") {
-      Try {
-        val coll = database.collection(table)
-        val b = Profiler.profile("Builder") {
-          val bldr = BSONBuilder()
-          bldr.string("_id", key)
-          val i = values.entrySet.iterator()
-          while (i.hasNext) {
-            val e = i.next()
-            bldr.binary(e.getKey, e.getValue.toArray, UserDefinedBinary)
-          }
-          bldr
-        }
-        val result = Profiler.profile("Builder.result") { b.result }
-        val future = Profiler.profile("Collection.insertOne") { coll.insertOne(result).map { wr ⇒ if (wr.ok != 0) 0 else 1 } }
-        Profiler.profile("Await.result") { Await.result(future, 10.seconds) }
-      } match {
-        case Success(x) ⇒ x
-        case Failure(xcptn) ⇒
-          println("Failure while inserting key=" + key)
-          xcptn.printStackTrace()
-          1
+  override def insert(table: String, key: String, values: java.util.HashMap[String, ByteIterator]): Int = {
+    try {
+      val coll = database.collection(table)
+      val bldr = BSONBuilder()
+      bldr.string("_id", key)
+      val i = values.entrySet.iterator()
+      while (i.hasNext) {
+        val e = i.next()
+        bldr.binary(e.getKey, bi2bs(e.getValue), UserDefinedBinary)
       }
+      val result = bldr.result
+      val future = coll.insertOne(result)
+      Await.result(future, 10.seconds)
+      0
     }
+    catch {
+      case xcptn : Throwable ⇒
+        println("Failure while inserting key=" + key)
+        xcptn.printStackTrace()
+        1
+    }
+  }
 
   private def makeProjection(fields: java.util.Set[String]): Option[Projection] = {
     if (fields != null) {
@@ -190,7 +195,7 @@ class RxMongoClient extends DB {
    */
   override def read(
     table: String, key: String, fields: java.util.Set[String],
-    result: java.util.HashMap[String, ByteIterator]): Int = Profiler.profile("RxMongoClient.read") {
+    result: java.util.HashMap[String, ByteIterator]): Int = {
     Try {
       val collection = database.collection(table)
       val query = Query("_id" $eq key)
@@ -220,26 +225,25 @@ class RxMongoClient extends DB {
    * @param values A HashMap of field/value pairs to update in the record
    * @return Zero on success, a non-zero error code on error. See this class's description for a discussion of error codes.
    */
-  override def update(table: String, key: String, values: java.util.HashMap[String, ByteIterator]): Int =
-    Profiler.profile("RxMongoClient.update") {
-      Try {
-        val collection = database.collection(table)
-        val q = Query("_id" $eq key)
-        val i = values.entrySet.iterator
-        val vals = for ((key, value) ← values.asScala.toSeq) yield {key → value.toArray }
+  override def update(table: String, key: String, values: java.util.HashMap[String, ByteIterator]): Int = {
+    Try {
+      val collection = database.collection(table)
+      val q = Query("_id" $eq key)
+      val i = values.entrySet.iterator
+      val vals = for ((key, value) ← values.asScala.toSeq) yield {key → value.toArray }
 
-        val update = Update(Query("_id" $eq key), $set[Array[Byte], BSONBinary](vals: _*), upsert = false, multi = false, isolated = false)
+      val update = Update(Query("_id" $eq key), $set[Array[Byte], BSONBinary](vals: _*), upsert = false, multi = false, isolated = false)
 
-        val future = collection.updateOne(update) map { wr ⇒ if (wr.ok != 0) 0 else 1 }
-        Await.result(future, 5.seconds)
-      } match {
-        case Success(x) ⇒ x
-        case Failure(xcptn) ⇒
-          println("Failure while updating key=" + key)
-          System.err.println(xcptn.toString)
-          1
-      }
+      val future = collection.updateOne(update) map { wr ⇒ if (wr.ok != 0) 0 else 1 }
+      Await.result(future, 5.seconds)
+    } match {
+      case Success(x) ⇒ x
+      case Failure(xcptn) ⇒
+        println("Failure while updating key=" + key)
+        System.err.println(xcptn.toString)
+        1
     }
+  }
 
   /**
    * Perform a range scan for a set of records in the database. Each field/value pair from the result will be stored in a HashMap.
@@ -253,8 +257,7 @@ class RxMongoClient extends DB {
    */
   override def scan(
     table: String, startKey: String, recordCount: Int, fields: java.util.Set[String],
-    result: java.util.Vector[java.util.HashMap[String, ByteIterator]]): Int =
-    Profiler.profile("RxMongoClient.scan") {
+    result: java.util.Vector[java.util.HashMap[String, ByteIterator]]): Int = {
       Try {
         val collection = database.collection(table)
         val query = Query("_id" $gte startKey)

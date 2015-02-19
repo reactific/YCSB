@@ -15,17 +15,27 @@
     <dependency>
       <groupId>org.scala-lang</groupId>
       <artifactId>scala-library</artifactId>
-      <version>2.11.4</version>
+      <version>2.11.5</version>
     </dependency>
       <dependency>
           <groupId>org.scala-lang</groupId>
           <artifactId>scala-reflect</artifactId>
-          <version>2.11.4</version>
+          <version>2.11.5</version>
       </dependency>
     <dependency>
-      <groupId>org.rxmongo</groupId>
+      <groupId>com.reactific</groupId>
       <artifactId>rxmongo-client_2.11</artifactId>
       <version>${rxmongo.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.reactific</groupId>
+      <artifactId>hotspot-profiler_2.11</artifactId>
+      <version>0.1.0-SNAPSHOT</version>
+    </dependency>
+    <dependency>
+      <groupId>ch.qos.logback</groupId>
+      <artifactId>logback-classic</artifactId>
+      <version>1.1.2</version>
     </dependency>
     <dependency>
       <groupId>com.yahoo.ycsb</groupId>
