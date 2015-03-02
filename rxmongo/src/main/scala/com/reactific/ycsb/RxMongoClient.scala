@@ -8,7 +8,6 @@
 package com.reactific.ycsb
 
 import akka.util.ByteString
-import com.reactific.hsp.Profiler
 
 import rxmongo.bson.BinarySubtype.UserDefinedBinary
 import rxmongo.bson._
@@ -17,7 +16,6 @@ import rxmongo.client.{Database, Client}
 import rxmongo.driver.{QueryOptions, Projection}
 
 import java.util.Properties
-import java.util.concurrent.atomic.{AtomicInteger}
 
 import com.yahoo.ycsb.ByteIterator
 import com.yahoo.ycsb.DB
@@ -30,9 +28,9 @@ import scala.util.{Failure, Success, Try}
 
 
 object RxMongo {
-  var mongo : Client = null
+  var rxmongo : Client = null
   var database : Database = null
-  final val initCount: AtomicInteger = new AtomicInteger(0)
+  var initCount : Int = 0
 }
 
 case class BSONBinaryByteIterator(bin: BSONBinary) extends ByteIterator {
@@ -56,57 +54,50 @@ case class BSONBinaryByteIterator(bin: BSONBinary) extends ByteIterator {
  */
 class RxMongoClient extends DB {
 
-  var rxmongo: Client = null
-  var database: Database = null
+  import RxMongo._
 
   /**
    * Initialize any state for this DB.
    * Called once per DB instance; there is one DB instance per client thread.
    */
-  override def init(): Unit = Profiler.profile("RxMongoClient.init") {
-    Try {
-      RxMongo.initCount.getAndIncrement
-      RxMongo.synchronized {
-        if (RxMongo.database != null) {
-          database = RxMongo.database
-          rxmongo = RxMongo.mongo
-        } else {
-          // initialize MongoDb driver
-          val props: Properties = getProperties
-          val url: String = props.getProperty("rxmongo.url", "mongodb://localhost:27017/ycsb?minPoolSize=2&maxPoolSize=2")
-          val dbname: String = props.getProperty("rxmongo.db", "ycsb")
-          rxmongo = Client(url)
-          database = rxmongo.database(dbname)
-          System.out.println("rxmongo connection created with " + url)
-          RxMongo.mongo = rxmongo
-          RxMongo.database = database
-        }
+  override def init(): Unit = try {
+    RxMongo.synchronized {
+      if (initCount == 0) {
+        initCount = 1
+        // initialize MongoDb driver
+        val props: Properties = getProperties
+        val url: String = props.getProperty("rxmongo.url", "mongodb://localhost:27017/ycsb?minPoolSize=10&maxPoolSize=10")
+        val dbname: String = props.getProperty("rxmongo.db", "ycsb")
+        rxmongo = Client(url)
+        database = rxmongo.database(dbname)
+        System.out.println("rxmongo connection created with " + url)
+      } else {
+        RxMongo.initCount += 1
       }
-    } match {
-      case Success(x) ⇒ x
-      case Failure(xcptn) ⇒
-        System.err.println(s"Could not initialize MongoDB client for Loader: $xcptn")
-        xcptn.printStackTrace()
     }
+  } catch {
+    case xcptn : Throwable ⇒
+      System.err.println(s"Could not initialize MongoDB client for Loader: $xcptn")
+      xcptn.printStackTrace()
   }
 
   /**
    * Cleanup any state for this DB.
    * Called once per DB instance; there is one DB instance per client thread.
    */
-  override def cleanup(): Unit = {
-    Try {
-      if (RxMongo.initCount.decrementAndGet() <= 0) {
-        RxMongo.mongo.close()
-        RxMongo.mongo = null
-        RxMongo.database = null
+  override def cleanup(): Unit = try {
+    RxMongo.synchronized {
+      initCount -= 1
+      if (initCount == 0) {
+        rxmongo.close()
+        rxmongo = null
+        database = null
       }
-    } match {
-      case Success(x) ⇒ x
-      case Failure(xcptn) ⇒
-        System.err.println(s"Could not close MongoDB client: $xcptn")
-        xcptn.printStackTrace()
     }
+  } catch {
+    case xcptn : Throwable ⇒
+      System.err.println(s"Could not close MongoDB client: $xcptn")
+      xcptn.printStackTrace()
   }
 
   /**
@@ -116,15 +107,14 @@ class RxMongoClient extends DB {
    * @param key The record key of the record to delete.
    * @return Zero on success, a non-zero error code on error. See this class's description for a discussion of error codes.
    */
-  override def delete(table: String, key: String): Int = Profiler.profile("RxMongoClient.delete") {
-    Try {
+  override def delete(table: String, key: String): Int =  {
+    try {
       val coll = database.collection(table)
       val future = coll.delete(Seq(Delete("_id" $eq key, 1)))
       Await.result(future, 5.seconds)
       0
-    } match {
-      case Success(x: Int) ⇒ x
-      case Failure(xcptn) ⇒
+    } catch {
+      case xcptn : Throwable ⇒
         println("Failure while deleting key=" + key)
         System.err.println(xcptn.toString)
         1
@@ -150,15 +140,17 @@ class RxMongoClient extends DB {
   override def insert(table: String, key: String, values: java.util.HashMap[String, ByteIterator]): Int = {
     try {
       val coll = database.collection(table)
-      val bldr = BSONBuilder()
-      bldr.string("_id", key)
-      val i = values.entrySet.iterator()
-      while (i.hasNext) {
-        val e = i.next()
-        bldr.binary(e.getKey, bi2bs(e.getValue), UserDefinedBinary)
+      val result = {
+        val bldr = BSONBuilder()
+        bldr.string("_id", key)
+        val i = values.entrySet.iterator()
+        while (i.hasNext) {
+          val e = i.next()
+          bldr.binary(e.getKey, bi2bs(e.getValue), UserDefinedBinary)
+        }
+        bldr.result
       }
-      val result = bldr.result
-      val future = coll.insertOne(result)
+      val future =  coll.insertOne(result)
       Await.result(future, 10.seconds)
       0
     }
